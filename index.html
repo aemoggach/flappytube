@@ -56,7 +56,7 @@
 
     <div id="game-container">
         <div id="ui-layer">
-            <div class="instruction">SPACE to Fly</div>
+            <div class="instruction">TAP or SPACE to Fly</div>
         </div>
         <canvas id="gameCanvas" width="400" height="600"></canvas>
     </div>
@@ -843,57 +843,63 @@
 
         // --- INPUT ---
         let spacePressed = false;
+        let touchPressed = false;
         
+        // Shared function for game actions (start/restart or flap)
+        function handleGameAction() {
+            if (isGameOver) {
+                // RESET GAME
+                isGameOver = false;
+                bird.y = 450;
+                bird.velocity = 0;
+                bird.targetVelocity = 0;
+                bird.smoothVelocity = 0;
+                bird.rotation = 0;
+                bird.targetRotation = 0;
+                tubes.items = [];
+                score = 0;
+                frames = 0;
+                lives = 3;
+                isInvincible = false;
+                particles = [];
+                scorePopups = [];
+                shakeIntensity = 0;
+                shakeX = 0;
+                shakeY = 0;
+                flashAlpha = 0;
+                bird.lastFlapFrame = 0;
+                currentBirdColorIndex = 0;
+                tubes.dx = baseSpeed;
+                
+                // Reset Kevin Durant
+                kevinDurant.hasAppeared = false;
+                kevinDurant.x = -150;
+                kevinDurant.frame = 0;
+                kevinDurant.textTimer = 0;
+                kevinDurant.disappearTimer = 0;
+                kevinDurant.isDisappearing = false;
+                kevinDurant.alpha = 1.0;
+                
+                // Reset clouds
+                clouds = [
+                    { x: 50, y: 80, speed: 0.3, size: 1.0 },
+                    { x: 200, y: 120, speed: 0.5, size: 0.8 },
+                    { x: 350, y: 100, speed: 0.4, size: 1.1 },
+                    { x: 500, y: 150, speed: 0.3, size: 0.9 },
+                    { x: 650, y: 90, speed: 0.5, size: 1.0 },
+                    { x: 800, y: 130, speed: 0.4, size: 0.85 }
+                ];
+            } else {
+                bird.flap();
+            }
+        }
+        
+        // Keyboard input (Spacebar)
         window.addEventListener("keydown", function(e) {
             if (e.code === "Space" && !spacePressed) {
                 spacePressed = true;
                 e.preventDefault();
-                
-                if (isGameOver) {
-                    // RESET GAME
-                    isGameOver = false;
-                    bird.y = 450;
-                    bird.velocity = 0;
-                    bird.targetVelocity = 0;
-                    bird.smoothVelocity = 0;
-                    bird.rotation = 0;
-                    bird.targetRotation = 0;
-                    tubes.items = [];
-                    score = 0;
-                    frames = 0;
-                    lives = 3;
-                    isInvincible = false;
-                    particles = [];
-                    scorePopups = [];
-                    shakeIntensity = 0;
-                    shakeX = 0;
-                    shakeY = 0;
-                    flashAlpha = 0;
-                    bird.lastFlapFrame = 0;
-                    currentBirdColorIndex = 0;
-                    tubes.dx = baseSpeed;
-                    
-                    // Reset Kevin Durant
-                    kevinDurant.hasAppeared = false;
-                    kevinDurant.x = -150;
-                    kevinDurant.frame = 0;
-                    kevinDurant.textTimer = 0;
-                    kevinDurant.disappearTimer = 0;
-                    kevinDurant.isDisappearing = false;
-                    kevinDurant.alpha = 1.0;
-                    
-                    // Reset clouds
-                    clouds = [
-                        { x: 50, y: 80, speed: 0.3, size: 1.0 },
-                        { x: 200, y: 120, speed: 0.5, size: 0.8 },
-                        { x: 350, y: 100, speed: 0.4, size: 1.1 },
-                        { x: 500, y: 150, speed: 0.3, size: 0.9 },
-                        { x: 650, y: 90, speed: 0.5, size: 1.0 },
-                        { x: 800, y: 130, speed: 0.4, size: 0.85 }
-                    ];
-                } else {
-                    bird.flap();
-                }
+                handleGameAction();
             }
         });
         
@@ -908,6 +914,31 @@
             if (e.code === "Space") {
                 e.preventDefault();
             }
+        });
+        
+        // Touch input (Mobile/Tap)
+        canvas.addEventListener("touchstart", function(e) {
+            e.preventDefault();
+            if (!touchPressed) {
+                touchPressed = true;
+                handleGameAction();
+            }
+        });
+        
+        canvas.addEventListener("touchend", function(e) {
+            e.preventDefault();
+            touchPressed = false;
+        });
+        
+        canvas.addEventListener("touchcancel", function(e) {
+            e.preventDefault();
+            touchPressed = false;
+        });
+        
+        // Mouse click support (for desktop users who want to click)
+        canvas.addEventListener("click", function(e) {
+            e.preventDefault();
+            handleGameAction();
         });
 
         // Start
