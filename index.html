@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>🐦 Flappy Tube Runner: Double Trouble Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Verdana', sans-serif;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+        }
+        canvas {
+            border: 6px solid #fff;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8), 0 0 80px rgba(135, 206, 235, 0.3);
+            border-radius: 8px;
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            width: 400px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+        .instruction {
+            color: white;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px #000, 0 0 10px rgba(255,255,255,0.5);
+            font-size: 14px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-layer">
+            <div class="instruction">SPACE to Fly</div>
+        </div>
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+    </div>
+
+    <script>
+        // --- SETUP ---
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // --- GAME VARIABLES ---
+        let frames = 0;
+        let score = 0;
+        let lives = 3;
+        let isGameOver = false;
+        let isPaused = false;
+        let baseSpeed = 2.5;
+        let initialSpawnDelay = 90; // More room before first tube
+        
+        // Screen Shake
+        let shakeX = 0;
+        let shakeY = 0;
+        let shakeIntensity = 0;
+        
+        // Screen Flash
+        let flashAlpha = 0;
+        let flashColor = [255, 0, 0];
+        
+        // Invincibility Logic
+        let isInvincible = false;
+        let invincibleTimer = 0;
+        const INVINCIBLE_DURATION = 120; // Frames (approx 2 seconds)
+
+        // Particle System
+        let particles = [];
+        
+        // Score Popups
+        let scorePopups = [];
+        
+        // Kevin Durant (Kool-Aid Man style)
+        let kevinDurant = {
+            hasAppeared: false,
+            x: -150, // Start off-screen
+            y: canvas.height / 2 - 60,
+            targetX: 50, // Where he stops
+            speed: 8,
+            frame: 0,
+            scale: 1.0,
+            showText: true,
+            textTimer: 0,
+            disappearTimer: 0, // Timer before he disappears
+            isDisappearing: false,
+            alpha: 1.0 // For fade out
+        };
+        
+        // Parallax Clouds (multiple layers)
+        let clouds = [
+            { x: 50, y: 80, speed: 0.3, size: 1.0 },
+            { x: 200, y: 120, speed: 0.5, size: 0.8 },
+            { x: 350, y: 100, speed: 0.4, size: 1.1 },
+            { x: 500, y: 150, speed: 0.3, size: 0.9 },
+            { x: 650, y: 90, speed: 0.5, size: 1.0 },
+            { x: 800, y: 130, speed: 0.4, size: 0.85 }
+        ];
+
+        // Bird colors that change every 5 tubes
+        const birdColors = [
+            { body: "#FF8C00", light: "#FFA500", name: "Orange" },
+            { body: "#FF1493", light: "#FF69B4", name: "Pink" },
+            { body: "#00CED1", light: "#40E0D0", name: "Turquoise" },
+            { body: "#FFD700", light: "#FFE55C", name: "Gold" },
+            { body: "#9370DB", light: "#BA55D3", name: "Purple" },
+            { body: "#32CD32", light: "#90EE90", name: "Green" }
+        ];
+        let currentBirdColorIndex = 0;
+        
+        // --- BIRD OBJECT ---
+        const bird = {
+            x: 60,
+            y: 450,
+            radius: 18,
+            velocity: 0,
+            targetVelocity: 0, // For smooth velocity transitions
+            gravity: 0.22, // Reduced gravity for easier gameplay
+            jumpStrength: -4.2, // Less dramatic jump
+            rotation: 0,
+            targetRotation: 0,
+            wingAngle: 0,
+            lastFlapFrame: 0,
+            smoothVelocity: 0, // For smoother movement
+            
+            draw: function() {
+                ctx.save();
+                
+                // Apply screen shake
+                ctx.translate(shakeX, shakeY);
+                ctx.translate(this.x, this.y);
+                
+                // Smooth rotation interpolation - use smoothVelocity for more natural feel
+                this.targetRotation = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, (this.smoothVelocity * 0.1)));
+                this.rotation += (this.targetRotation - this.rotation) * 0.2; // Smoother interpolation
+                ctx.rotate(this.rotation);
+
+                // HANDLE BLINKING IF INVINCIBLE
+                if (isInvincible) {
+                    if (Math.floor(frames / 5) % 2 === 0) {
+                        ctx.globalAlpha = 0.3;
+                    }
+                }
+
+                // Get current bird color
+                let birdColor = birdColors[currentBirdColorIndex];
+
+                // Body with gradient - more realistic shading
+                let bodyGrad = ctx.createRadialGradient(-4, -4, 0, 0, 0, this.radius);
+                bodyGrad.addColorStop(0, birdColor.light);
+                bodyGrad.addColorStop(0.6, birdColor.body);
+                bodyGrad.addColorStop(1, birdColor.body);
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = bodyGrad;
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "rgba(255,255,255,0.8)";
+                ctx.stroke();
+
+                // More realistic wing animation - smoother
+                let timeSinceFlap = frames - this.lastFlapFrame;
+                this.wingAngle = Math.sin(timeSinceFlap * 0.4) * 0.25;
+                if (timeSinceFlap > 30) {
+                    this.wingAngle *= 0.3; // Wing settles when not flapping
+                }
+                
+                ctx.save();
+                ctx.rotate(this.wingAngle);
+                ctx.beginPath();
+                ctx.ellipse(-5, 5, 10, 6, 0.2 + this.wingAngle * 0.5, 0, Math.PI * 2);
+                ctx.fillStyle = birdColor.light;
+                ctx.fill();
+                ctx.strokeStyle = "rgba(255,255,255,0.6)";
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.restore();
+
+                // More realistic eye
+                ctx.beginPath();
+                ctx.arc(8, -8, 7, 0, Math.PI * 2);
+                ctx.fillStyle = "white";
+                ctx.fill();
+                ctx.strokeStyle = "rgba(0,0,0,0.3)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                // Eye highlight
+                ctx.beginPath();
+                ctx.arc(9, -9, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                ctx.fill();
+                
+                // Pupil with slight offset for more realistic look
+                ctx.beginPath();
+                ctx.arc(10, -7.5, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = "black";
+                ctx.fill();
+
+                // Beak with gradient
+                let beakGrad = ctx.createLinearGradient(12, 2, 24, 6);
+                beakGrad.addColorStop(0, "#FFD700");
+                beakGrad.addColorStop(1, "#FFA500");
+                
+                ctx.beginPath();
+                ctx.moveTo(12, 2);
+                ctx.lineTo(24, 6);
+                ctx.lineTo(12, 10);
+                ctx.fillStyle = beakGrad;
+                ctx.fill();
+                ctx.strokeStyle = "rgba(255,255,255,0.5)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                ctx.restore();
+            },
+            
+            update: function() {
+                // Smoother velocity transition towards target (less dramatic)
+                this.velocity += (this.targetVelocity - this.velocity) * 0.25;
+                
+                // Apply gravity to target velocity
+                this.targetVelocity += this.gravity;
+                
+                // Even smoother interpolation for position
+                this.smoothVelocity += (this.velocity - this.smoothVelocity) * 0.3;
+                this.y += this.smoothVelocity;
+
+                // Floor Collision - Instant Game Over (no explosion)
+                if (this.y + this.radius > canvas.height) {
+                    lives = 0; 
+                    isGameOver = true;
+                }
+
+                // Ceiling Collision
+                if (this.y - this.radius < 0) {
+                    this.y = this.radius;
+                    this.velocity = 0;
+                    this.targetVelocity = 0;
+                    this.smoothVelocity = 0;
+                }
+            },
+            
+            flap: function() {
+                // Even smoother transition to jump velocity (less dramatic)
+                this.targetVelocity = this.jumpStrength;
+                // Don't instantly change velocity, let it ease in
+                this.velocity += (this.jumpStrength - this.velocity) * 0.4;
+                this.lastFlapFrame = frames;
+                createParticles(this.x, this.y, 2, "#FFD700", 0.2); // Fewer particles
+            }
+        };
+
+        // --- TUBES OBJECT ---
+        const tubes = {
+            items: [],
+            w: 70, // Wider tubes
+            gap: 115, // Smaller gap
+            dx: baseSpeed,
+            
+            draw: function() {
+                for (let i = 0; i < this.items.length; i++) {
+                    let t = this.items[i];
+                    
+                    // Lighter gradient for cylindrical look
+                    let grad = ctx.createLinearGradient(t.x, 0, t.x + this.w, 0);
+                    grad.addColorStop(0, "#004400");
+                    grad.addColorStop(0.15, "#006600");
+                    grad.addColorStop(0.3, "#228B22");
+                    grad.addColorStop(0.5, "#32CD32");
+                    grad.addColorStop(0.7, "#228B22");
+                    grad.addColorStop(0.85, "#006600");
+                    grad.addColorStop(1, "#004400");
+                    
+                    ctx.fillStyle = grad;
+                    ctx.strokeStyle = "#003300";
+                    ctx.lineWidth = 2.5;
+
+                    // Top Tube with inner shadow
+                    ctx.fillRect(t.x, 0, this.w, t.top);
+                    ctx.strokeRect(t.x, 0, this.w, t.top);
+                    
+                    // Top Cap with 3D effect (lighter)
+                    let capGrad = ctx.createLinearGradient(t.x - 3, t.top - 20, t.x - 3, t.top);
+                    capGrad.addColorStop(0, "#003300");
+                    capGrad.addColorStop(1, "#006600");
+                    ctx.fillStyle = capGrad;
+                    ctx.fillRect(t.x - 3, t.top - 20, this.w + 6, 20);
+                    ctx.strokeRect(t.x - 3, t.top - 20, this.w + 6, 20);
+                    
+                    // Reset gradient
+                    ctx.fillStyle = grad;
+
+                    // Bottom Tube
+                    ctx.fillRect(t.x, canvas.height - t.bottom, this.w, t.bottom);
+                    ctx.strokeRect(t.x, canvas.height - t.bottom, this.w, t.bottom);
+
+                    // Bottom Cap (lighter)
+                    let bottomCapGrad = ctx.createLinearGradient(t.x - 3, canvas.height - t.bottom, t.x - 3, canvas.height - t.bottom + 20);
+                    bottomCapGrad.addColorStop(0, "#003300");
+                    bottomCapGrad.addColorStop(1, "#006600");
+                    ctx.fillStyle = bottomCapGrad;
+                    ctx.fillRect(t.x - 3, canvas.height - t.bottom, this.w + 6, 20);
+                    ctx.strokeRect(t.x - 3, canvas.height - t.bottom, this.w + 6, 20);
+                }
+            },
+
+            update: function() {
+                // Update speed based on score (tiny increase per tube)
+                this.dx = baseSpeed + (score * 0.02);
+                
+                // Spawn Logic - Evenly spaced, with initial delay
+                if (frames >= initialSpawnDelay && (frames - initialSpawnDelay) % 120 === 0) {
+                    let minHeight = 60;
+                    let maxTop = canvas.height - minHeight - this.gap;
+                    let topH = Math.floor(Math.random() * (maxTop - minHeight + 1) + minHeight);
+                    
+                    this.items.push({
+                        x: canvas.width,
+                        top: topH,
+                        bottom: canvas.height - (topH + this.gap),
+                        passed: false
+                    });
+                }
+
+                for (let i = 0; i < this.items.length; i++) {
+                    let t = this.items[i];
+                    t.x -= this.dx;
+
+                    // Collision Logic
+                    if (bird.x + bird.radius > t.x && bird.x - bird.radius < t.x + this.w) {
+                        if (bird.y - bird.radius < t.top || bird.y + bird.radius > canvas.height - t.bottom) {
+                            if (!isInvincible) {
+                                takeDamage();
+                                // No explosion on hit
+                            }
+                        }
+                    }
+
+                    // Score Logic with popup and color change every 5 tubes
+                    if (t.x + this.w < bird.x && !t.passed) {
+                        score++;
+                        t.passed = true;
+                        createScorePopup(bird.x, bird.y - 30, "+1");
+                        createParticles(bird.x, bird.y, 8, "#FFD700", 0.5);
+                        
+                        // Change bird color every 5 tubes
+                        if (score % 5 === 0) {
+                            currentBirdColorIndex = (currentBirdColorIndex + 1) % birdColors.length;
+                        }
+                        
+                        // Kevin Durant appears after 10th tube!
+                        if (score === 10 && !kevinDurant.hasAppeared) {
+                            kevinDurant.hasAppeared = true;
+                            kevinDurant.x = -150;
+                            kevinDurant.frame = 0;
+                            kevinDurant.textTimer = 120; // Show text for 2 seconds
+                            kevinDurant.disappearTimer = 300; // Disappear after ~5 seconds (300 frames)
+                            kevinDurant.isDisappearing = false;
+                            kevinDurant.alpha = 1.0;
+                            addScreenShake(20);
+                            addScreenFlash(255, 165, 0, 0.5); // Orange flash
+                        }
+                    }
+
+                    // Remove off-screen
+                    if (t.x + this.w < -10) {
+                        this.items.shift();
+                    }
+                }
+            }
+        };
+
+        // --- BACKGROUND ---
+        function drawBackground() {
+            // Sky gradient
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGrad.addColorStop(0, "#B0E0E6");
+            skyGrad.addColorStop(1, "#87CEEB");
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Parallax Clouds (multiple layers)
+            ctx.fillStyle = "rgba(255,255,255,0.8)";
+            for (let cloud of clouds) {
+                cloud.x -= cloud.speed;
+                if (cloud.x < -100) {
+                    cloud.x = canvas.width + 100;
+                    cloud.y = 60 + Math.random() * 100;
+                }
+                drawCloud(cloud.x, cloud.y, cloud.size);
+            }
+        }
+        
+        function drawCloud(x, y, scale = 1.0) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(scale, scale);
+            ctx.beginPath();
+            ctx.arc(0, 0, 30, 0, Math.PI*2);
+            ctx.arc(20, -10, 30, 0, Math.PI*2);
+            ctx.arc(40, 0, 30, 0, Math.PI*2);
+            ctx.arc(10, 10, 25, 0, Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+        }
+        
+        // --- PARTICLE SYSTEM ---
+        function createParticles(x, y, count, color, speed = 0.5) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 3 * speed,
+                    vy: (Math.random() - 0.5) * 3 * speed,
+                    life: 30 + Math.random() * 20,
+                    maxLife: 30 + Math.random() * 20,
+                    size: 2 + Math.random() * 3,
+                    color: color
+                });
+            }
+        }
+        
+        function createParticleExplosion(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 40 + Math.random() * 20,
+                    maxLife: 40 + Math.random() * 20,
+                    size: 3 + Math.random() * 4,
+                    color: color
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.1; // Gravity
+                p.life--;
+                
+                if (p.life <= 0 || p.x < 0 || p.x > canvas.width || p.y > canvas.height) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            for (let p of particles) {
+                let alpha = p.life / p.maxLife;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+        
+        // --- SCORE POPUPS ---
+        function createScorePopup(x, y, text) {
+            scorePopups.push({
+                x: x,
+                y: y,
+                text: text,
+                life: 60,
+                maxLife: 60,
+                vy: -2
+            });
+        }
+        
+        function updateScorePopups() {
+            for (let i = scorePopups.length - 1; i >= 0; i--) {
+                let popup = scorePopups[i];
+                popup.y += popup.vy;
+                popup.life--;
+                
+                if (popup.life <= 0) {
+                    scorePopups.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawScorePopups() {
+            for (let popup of scorePopups) {
+                let alpha = popup.life / popup.maxLife;
+                let scale = 1 + (1 - alpha) * 0.5;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = "#FFD700";
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 3;
+                ctx.font = `bold ${20 * scale}px Arial`;
+                ctx.textAlign = "center";
+                ctx.strokeText(popup.text, popup.x, popup.y);
+                ctx.fillText(popup.text, popup.x, popup.y);
+                ctx.restore();
+            }
+        }
+        
+        // --- SCREEN SHAKE ---
+        function addScreenShake(intensity) {
+            shakeIntensity = Math.max(shakeIntensity, intensity);
+        }
+        
+        function updateScreenShake() {
+            if (shakeIntensity > 0) {
+                shakeX = (Math.random() - 0.5) * shakeIntensity;
+                shakeY = (Math.random() - 0.5) * shakeIntensity;
+                shakeIntensity *= 0.9;
+                if (shakeIntensity < 0.1) {
+                    shakeIntensity = 0;
+                    shakeX = 0;
+                    shakeY = 0;
+                }
+            }
+        }
+        
+        // --- SCREEN FLASH ---
+        function addScreenFlash(r, g, b, alpha) {
+            flashColor = [r, g, b];
+            flashAlpha = alpha;
+        }
+        
+        function updateScreenFlash() {
+            if (flashAlpha > 0) {
+                flashAlpha *= 0.85;
+                if (flashAlpha < 0.01) {
+                    flashAlpha = 0;
+                }
+            }
+        }
+        
+        function drawScreenFlash() {
+            if (flashAlpha > 0) {
+                ctx.fillStyle = `rgba(${flashColor[0]}, ${flashColor[1]}, ${flashColor[2]}, ${flashAlpha})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+        
+        // --- KEVIN DURANT (KOOL-AID MAN STYLE) ---
+        function updateKevinDurant() {
+            if (!kevinDurant.hasAppeared) return;
+            
+            kevinDurant.frame++;
+            
+            // Countdown to disappearance
+            if (kevinDurant.disappearTimer > 0) {
+                kevinDurant.disappearTimer--;
+                if (kevinDurant.disappearTimer === 0) {
+                    kevinDurant.isDisappearing = true;
+                }
+            }
+            
+            // Handle disappearing animation
+            if (kevinDurant.isDisappearing) {
+                kevinDurant.alpha -= 0.05; // Fade out
+                kevinDurant.x -= 5; // Move off screen to the left
+                if (kevinDurant.alpha <= 0 || kevinDurant.x < -200) {
+                    kevinDurant.hasAppeared = false; // Completely gone
+                    kevinDurant.isDisappearing = false;
+                }
+            } else {
+                // Animate busting through the wall
+                if (kevinDurant.x < kevinDurant.targetX) {
+                    kevinDurant.x += kevinDurant.speed;
+                    // Bounce effect when he first appears
+                    if (kevinDurant.x < kevinDurant.targetX - 20) {
+                        kevinDurant.scale = 1.0 + Math.sin(kevinDurant.frame * 0.3) * 0.1;
+                    } else {
+                        kevinDurant.scale = 1.0;
+                    }
+                }
+            }
+            
+            // Update text timer
+            if (kevinDurant.textTimer > 0) {
+                kevinDurant.textTimer--;
+            }
+        }
+        
+        function drawKevinDurant() {
+            if (!kevinDurant.hasAppeared || kevinDurant.x < -50) return;
+            
+            ctx.save();
+            ctx.globalAlpha = kevinDurant.alpha; // Apply fade out
+            ctx.translate(kevinDurant.x, kevinDurant.y);
+            ctx.scale(kevinDurant.scale, kevinDurant.scale);
+            
+            // Draw wall debris/bricks when he first appears
+            if (kevinDurant.frame < 30) {
+                ctx.fillStyle = "#8B7355"; // Brick color
+                for (let i = 0; i < 8; i++) {
+                    let angle = (i / 8) * Math.PI * 2;
+                    let dist = 40 + Math.random() * 20;
+                    let x = Math.cos(angle) * dist;
+                    let y = Math.sin(angle) * dist;
+                    ctx.fillRect(x - 5, y - 5, 10, 8);
+                }
+            }
+            
+            // Draw Kevin Durant as a simple but recognizable figure
+            // Body (tall and athletic)
+            ctx.fillStyle = "#4169E1"; // Royal blue jersey
+            ctx.fillRect(-20, -40, 40, 80);
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-20, -40, 40, 80);
+            
+            // Jersey number (35)
+            ctx.fillStyle = "#FFF";
+            ctx.font = "bold 24px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("35", 0, 10);
+            
+            // Head
+            ctx.fillStyle = "#D4A574"; // Skin tone
+            ctx.beginPath();
+            ctx.arc(0, -50, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Hair/headband
+            ctx.fillStyle = "#000";
+            ctx.fillRect(-15, -65, 30, 8);
+            
+            // Arms (raised like Kool-Aid Man - flexing!)
+            ctx.fillStyle = "#D4A574";
+            // Left arm (raised)
+            ctx.fillRect(-30, -45, 12, 40);
+            ctx.strokeRect(-30, -45, 12, 40);
+            // Right arm (raised)
+            ctx.fillRect(18, -45, 12, 40);
+            ctx.strokeRect(18, -45, 12, 40);
+            
+            // Legs
+            ctx.fillStyle = "#000"; // Shorts/legs
+            ctx.fillRect(-15, 40, 12, 25);
+            ctx.fillRect(3, 40, 12, 25);
+            
+            // Draw "OH YEAH!" text with animation
+            if (kevinDurant.textTimer > 0) {
+                let textAlpha = Math.min(1, kevinDurant.textTimer / 30);
+                let textScale = 1 + Math.sin(kevinDurant.frame * 0.2) * 0.1;
+                ctx.save();
+                ctx.translate(0, -100);
+                ctx.globalAlpha = textAlpha;
+                ctx.fillStyle = "#FF4500";
+                ctx.strokeStyle = "#FFF";
+                ctx.lineWidth = 5;
+                ctx.font = `bold ${36 * textScale}px Arial`;
+                ctx.textAlign = "center";
+                ctx.strokeText("OH YEAH!", 0, 0);
+                ctx.fillText("OH YEAH!", 0, 0);
+                ctx.restore();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawUI() {
+            // Draw Score with glow effect
+            ctx.save();
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "rgba(255, 215, 0, 0.8)";
+            ctx.fillStyle = "#FFD700";
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 4;
+            ctx.font = "bold 42px Arial";
+            ctx.textAlign = "center";
+            let scoreText = score.toString();
+            ctx.strokeText(scoreText, canvas.width/2, 65);
+            ctx.fillText(scoreText, canvas.width/2, 65);
+            ctx.restore();
+
+            // Draw Hearts (Lives) with pulse animation
+            for(let i=0; i<lives; i++) {
+                let pulse = Math.sin(frames * 0.1 + i) * 0.1 + 1;
+                drawHeart(30 + (i*40), 50, pulse);
+            }
+        }
+
+        function drawHeart(x, y, scale = 1.0) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(scale, scale);
+            ctx.translate(-x, -y);
+            
+            // Heart gradient
+            let heartGrad = ctx.createRadialGradient(x, y, 0, x, y, 20);
+            heartGrad.addColorStop(0, "#ff6666");
+            heartGrad.addColorStop(1, "#ff4444");
+            
+            ctx.fillStyle = heartGrad;
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            let topCurveHeight = 10;
+            ctx.moveTo(x, y + topCurveHeight);
+            ctx.bezierCurveTo(x, y, x - 15, y, x - 15, y + topCurveHeight);
+            ctx.bezierCurveTo(x - 15, y + (topCurveHeight + 10), x, y + (topCurveHeight + 20), x, y + (topCurveHeight + 20));
+            ctx.bezierCurveTo(x, y + (topCurveHeight + 20), x + 15, y + (topCurveHeight + 10), x + 15, y + topCurveHeight);
+            ctx.bezierCurveTo(x + 15, y, x, y, x, y + topCurveHeight);
+            ctx.fill();
+            ctx.stroke();
+            ctx.closePath();
+            ctx.restore();
+        }
+
+        // --- GAME LOGIC HELPERS ---
+        function takeDamage() {
+            lives--;
+            
+            // Screen effects
+            addScreenShake(15);
+            addScreenFlash(255, 0, 0, 0.4);
+            
+            if (lives <= 0) {
+                isGameOver = true;
+                addScreenShake(25);
+                // No explosion on game over
+            } else {
+                // Activate Invincibility
+                isInvincible = true;
+                invincibleTimer = INVINCIBLE_DURATION;
+                
+                // Visual bounce back - smooth transition
+                bird.targetVelocity = -4;
+                
+                // No explosion particles on damage
+            }
+        }
+
+        // --- MAIN LOOP ---
+        function loop() {
+            // Handle Invincibility Timer
+            if (isInvincible) {
+                invincibleTimer--;
+                if (invincibleTimer <= 0) {
+                    isInvincible = false;
+                }
+            }
+
+            // Update effects
+            updateScreenShake();
+            updateScreenFlash();
+            updateParticles();
+            updateScorePopups();
+            updateKevinDurant();
+
+            if (isGameOver) {
+                // Clear and draw background
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawBackground();
+                drawParticles();
+                
+                // Animated dim screen overlay
+                let pulse = Math.sin(frames * 0.1) * 0.05 + 0.7;
+                ctx.fillStyle = `rgba(0,0,0,${pulse})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Game Over Text with glow
+                ctx.save();
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = "rgba(255, 0, 0, 0.8)";
+                ctx.fillStyle = "white";
+                ctx.textAlign = "center";
+                ctx.font = "bold 52px Arial";
+                ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2 - 40);
+                ctx.restore();
+                
+                ctx.font = "bold 32px Arial";
+                ctx.fillStyle = "#FFD700";
+                ctx.fillText("Score: " + score, canvas.width/2, canvas.height/2 + 20);
+                
+                // Animated restart text
+                let blink = Math.floor(frames / 30) % 2;
+                if (blink) {
+                    ctx.font = "22px Arial";
+                    ctx.fillStyle = "#FFF";
+                    ctx.fillText("Press SPACE to Restart", canvas.width/2, canvas.height/2 + 80);
+                }
+                
+                frames++;
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            // Clear canvas first
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw & Update with screen shake
+            ctx.save();
+            ctx.translate(shakeX, shakeY);
+            drawBackground();
+            tubes.update();
+            tubes.draw();
+            bird.update();
+            bird.draw();
+            drawParticles();
+            drawScorePopups();
+            drawKevinDurant(); // Kevin Durant busts in!
+            ctx.restore();
+            
+            // Draw UI and flash on top (not affected by shake)
+            drawUI();
+            drawScreenFlash();
+
+            frames++;
+            requestAnimationFrame(loop);
+        }
+
+        // --- INPUT ---
+        let spacePressed = false;
+        
+        window.addEventListener("keydown", function(e) {
+            if (e.code === "Space" && !spacePressed) {
+                spacePressed = true;
+                e.preventDefault();
+                
+                if (isGameOver) {
+                    // RESET GAME
+                    isGameOver = false;
+                    bird.y = 450;
+                    bird.velocity = 0;
+                    bird.targetVelocity = 0;
+                    bird.smoothVelocity = 0;
+                    bird.rotation = 0;
+                    bird.targetRotation = 0;
+                    tubes.items = [];
+                    score = 0;
+                    frames = 0;
+                    lives = 3;
+                    isInvincible = false;
+                    particles = [];
+                    scorePopups = [];
+                    shakeIntensity = 0;
+                    shakeX = 0;
+                    shakeY = 0;
+                    flashAlpha = 0;
+                    bird.lastFlapFrame = 0;
+                    currentBirdColorIndex = 0;
+                    tubes.dx = baseSpeed;
+                    
+                    // Reset Kevin Durant
+                    kevinDurant.hasAppeared = false;
+                    kevinDurant.x = -150;
+                    kevinDurant.frame = 0;
+                    kevinDurant.textTimer = 0;
+                    kevinDurant.disappearTimer = 0;
+                    kevinDurant.isDisappearing = false;
+                    kevinDurant.alpha = 1.0;
+                    
+                    // Reset clouds
+                    clouds = [
+                        { x: 50, y: 80, speed: 0.3, size: 1.0 },
+                        { x: 200, y: 120, speed: 0.5, size: 0.8 },
+                        { x: 350, y: 100, speed: 0.4, size: 1.1 },
+                        { x: 500, y: 150, speed: 0.3, size: 0.9 },
+                        { x: 650, y: 90, speed: 0.5, size: 1.0 },
+                        { x: 800, y: 130, speed: 0.4, size: 0.85 }
+                    ];
+                } else {
+                    bird.flap();
+                }
+            }
+        });
+        
+        window.addEventListener("keyup", function(e) {
+            if (e.code === "Space") {
+                spacePressed = false;
+            }
+        });
+
+        // Prevent spacebar from scrolling
+        window.addEventListener("keydown", function(e) {
+            if (e.code === "Space") {
+                e.preventDefault();
+            }
+        });
+
+        // Start
+        loop();
+
+    </script>
+</body>
+</html>
